@@ -1,0 +1,16 @@
+# Code owners for this repository.
+#
+# The protect-master ruleset requires code owner review, so any pull request
+# touching a path below cannot merge without an approval from its owner. This
+# is what stops a contributor from weakening the rules that protect the branch
+# or from introducing automation that writes to it.
+
+# Repository automation and configuration
+/.github/                   @flipdazed
+/.github/CODEOWNERS         @flipdazed
+
+# Repository hygiene: what is and is not committed
+/.gitignore                 @flipdazed
+
+# The published build of the paper
+/clearing-models.pdf        @flipdazed

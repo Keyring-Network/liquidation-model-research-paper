@@ -34,7 +34,7 @@ Thumbs.db
 .vscode/
 .idea/
 
-# The only PDF tracked in this repo is clearing-models.pdf, which CI builds and
-# commits on merge to master. Everything else is transient.
+# clearing-models.pdf is the paper's current build and is tracked deliberately;
+# every other PDF here is a transient build product.
 *.pdf
 !clearing-models.pdf
