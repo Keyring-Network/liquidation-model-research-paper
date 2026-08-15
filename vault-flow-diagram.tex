@@ -12,16 +12,25 @@
 % Embed in another document:
 %   parent preamble needs \usepackage{standalone}, \usepackage{tikz},
 %   \usetikzlibrary{arrows.meta}, \usepackage{microtype}; then
-%   \input{vault-flow-diagram.tex} (the standalone package ignores this
-%   file's preamble when inputted).
+%   \resizebox{\textwidth}{!}{\input{vault-flow-diagram.tex}}. The standalone
+%   package discards this file's preamble when inputted, so the scale length
+%   and the tikzset style contract are defined in the body below.
+%   clearing-models.tex embeds it this way; the canvas is wider than an A4
+%   text block, hence the resizebox.
 % ============================================================================
 \documentclass[tikz,border=10pt]{standalone}
 \usepackage{microtype}
 \usetikzlibrary{arrows.meta}
 
+\begin{document}
+
+% Everything below sits inside the document body on purpose. When this file is
+% \input into a parent document, the standalone package discards the preamble
+% above, so the length and the style contract have to live here to survive.
+
 % --- Scale: 1 SVG unit = \vfscale. Canvas = 1700 x 645 units (~21.3 x 8.1 cm).
 %     y is negated so SVG coordinates (y down) transcribe verbatim. ----------
-\newlength{\vfscale}
+\ifdefined\vfscale\else\newlength{\vfscale}\fi
 \setlength{\vfscale}{0.0125cm}
 
 % --- Style contract (used by both body and annotation sections) --------------
@@ -56,7 +65,6 @@
   kink/.style      = {draw=black, line width=0.7pt},
 }
 
-\begin{document}
 \begin{tikzpicture}[x=\vfscale,y=-\vfscale]
 
 % ============================ FLOW BODY ======================================
