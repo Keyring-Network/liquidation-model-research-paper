@@ -8,6 +8,10 @@
 \usepackage{xcolor}
 \usepackage{listings}
 \usepackage{graphicx}
+\usepackage{microtype}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta}
+\usepackage{standalone}
 \usepackage[colorlinks=false,pdfborder={0 0 0}]{hyperref}
 
 \definecolor{codebg}{gray}{0.96}
@@ -95,7 +99,7 @@ These positions change hands slowly. Bank loans trade on assignment documentatio
 
 \begin{figure}[h]
 \centering
-\includegraphics[width=\textwidth]{vault-flow.png}
+\resizebox{\textwidth}{!}{\input{vault-flow-diagram.tex}}
 \caption{The on-chain levered credit structure, split across its funding, margin, and leverage layers. Lenders deposit into the funding vault and earn the borrow rate; the borrower posts tokenised assets into the collateral vault and borrows against them at a set LTV; the issuer provides the reference price. Clearing the borrower's position means exiting the collateral vault's contents, which is what the rest of this paper addresses.}
 \end{figure}
 
