@@ -60,11 +60,13 @@ pdflatex -interaction=nonstopmode clearing-models.tex
 
 `vault-flow.png` must sit alongside `clearing-models.tex`; the figure in Section 1 includes it directly. Its source is `vault-flow-diagram.tex`, a standalone TikZ document that compiles on its own and is rasterised to the PNG; edit the diagram there rather than the image.
 
-`clearing-models.pdf` in this repository is built by GitHub Actions on every merge to `master`. Do not commit the PDF.
+`clearing-models.pdf` is tracked in this repository and is the current build of `clearing-models.tex`. Rebuild it and commit it in the same pull request as any change to the source, so the PDF on `master` always matches the LaTeX beside it.
 
 ## Contributing
 
-This repository is public and `master` is protected. Contributions go through a fork or a branch plus a pull request. A pull request must leave the LaTeX compiling; check locally with the two `pdflatex` runs above before opening it.
+This repository is public and `master` is protected. Contributions go through a fork or a branch plus a pull request. Direct pushes to `master` are refused, as are force pushes and branch deletion.
+
+A pull request needs one approving review before it can merge. Compile locally with the two `pdflatex` runs above before opening it, and include the rebuilt `clearing-models.pdf` in the same pull request. Changes under `.github/`, to `.gitignore`, or to `clearing-models.pdf` additionally require review from the code owners listed in `.github/CODEOWNERS`.
 
 ## Licence and citation
 
