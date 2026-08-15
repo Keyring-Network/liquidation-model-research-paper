@@ -1,0 +1,128 @@
+% ============================================================================
+% vault-flow-diagram.tex
+% Keyring vault flow diagram -- LaTeX-native TikZ reproduction of the inline
+% SVG in "Vault Flow Diagram (standalone).html" (viewBox 1700 x 645).
+% Monochrome (black + grey) per brief: no brand colours, no background.
+% Fonts: stock Computer Modern (no font packages). microtype is used ONLY for
+% letter-spacing (\textls) on the small uppercase labels.
+%
+% Compile standalone:
+%   pdflatex -interaction=nonstopmode vault-flow-diagram.tex
+%
+% Embed in another document:
+%   parent preamble needs \usepackage{standalone}, \usepackage{tikz},
+%   \usetikzlibrary{arrows.meta}, \usepackage{microtype}; then
+%   \input{vault-flow-diagram.tex} (the standalone package ignores this
+%   file's preamble when inputted).
+% ============================================================================
+\documentclass[tikz,border=10pt]{standalone}
+\usepackage{microtype}
+\usetikzlibrary{arrows.meta}
+
+% --- Scale: 1 SVG unit = \vfscale. Canvas = 1700 x 645 units (~21.3 x 8.1 cm).
+%     y is negated so SVG coordinates (y down) transcribe verbatim. ----------
+\newlength{\vfscale}
+\setlength{\vfscale}{0.0125cm}
+
+% --- Style contract (used by both body and annotation sections) --------------
+% Line widths: SVG stroke-width w units -> w * 0.355 pt (2.5u=0.9pt, 2u=0.7pt,
+% 1.5u=0.5pt, 1u=0.35pt). Font sizes: SVG px * 0.355 -> pt (48=17, 26=9.2,
+% 19=6.7, 15=5.3, 10=3.5). Arrowheads: SVG markers are 9 x strokeWidth units
+% = 22.5u = 8pt filled triangles.
+\tikzset{
+  box/.style       = {draw=black, line width=0.7pt, fill=none},
+  boxtitle/.style  = {font=\sffamily\bfseries\fontsize{17}{19}\selectfont,
+                      text=black, anchor=center, inner sep=0pt},
+  boxtitleS/.style = {font=\sffamily\bfseries\fontsize{9.2}{11}\selectfont,
+                      text=black, anchor=base, inner sep=0pt},
+  flow/.style      = {draw=black, line width=0.9pt,
+                      -{Triangle[length=8pt,width=8pt]}},
+  flowlbl/.style   = {font=\ttfamily\bfseries\fontsize{5.3}{6.5}\selectfont,
+                      text=black, anchor=base, inner sep=1pt},
+  hdr/.style       = {font=\ttfamily\fontsize{6.7}{8}\selectfont,
+                      text=black!55, anchor=base, inner sep=0pt},
+  hdrrule/.style   = {draw=black!55, line width=0.4pt},
+  annot/.style     = {font=\ttfamily\fontsize{5.3}{6.5}\selectfont,
+                      text=black!55, anchor=base, inner sep=0pt},
+  annotS/.style    = {font=\ttfamily\fontsize{3.5}{4.5}\selectfont,
+                      text=black!55, anchor=base, inner sep=0pt},
+  ref/.style       = {draw=black!55, line width=0.9pt,
+                      dash pattern=on 2.1pt off 2.1pt,
+                      -{Triangle[length=8pt,width=8pt]}},
+  ltv/.style       = {draw=black, line width=0.9pt,
+                      dash pattern=on 2.1pt off 2.1pt,
+                      {Triangle[length=8pt,width=8pt]}-{Triangle[length=8pt,width=8pt]}},
+  wline/.style     = {draw=black, line width=0.35pt},
+  kink/.style      = {draw=black, line width=0.7pt},
+}
+
+\begin{document}
+\begin{tikzpicture}[x=\vfscale,y=-\vfscale]
+
+% ============================ FLOW BODY ======================================
+% ---- Boxes ----
+\draw[box] (40,70) rectangle ++(320,180);
+\node[boxtitle] at (200,160) {Lender};
+\draw[box] (553,70) rectangle ++(340,180);
+\node[boxtitle] at (723,160) {USD.*};
+\draw[box] (553,370) rectangle ++(340,180);
+\node[boxtitle] at (723,460) {Assets};
+\draw[box] (1087,220) rectangle ++(320,160);
+\node[boxtitle] at (1247,300) {Borrower};
+\draw[box] (1540,220) rectangle ++(120,160);
+\node[boxtitleS] at (1600,310) {Issuer};
+
+% ---- Edges ----
+\draw[flow] (360,130) -- (533,130);
+\node[flowlbl] at (447,118) {\textls[100]{DEPOSIT}};
+\draw[flow] (553,190) -- (380,190);
+\node[flowlbl] at (467,178) {\textls[100]{INTEREST}};
+\draw[flow] (893,130) .. controls (1299,130) and (1300,161) .. (1300,200);
+\node[flowlbl] at (1096,118) {\textls[100]{BORROW}};
+\draw[flow] (1194,220) .. controls (1194,191) and (1155,190) .. (913,190);
+\node[flowlbl] at (1053,178) {\textls[100]{INTEREST}};
+\draw[flow] (1247,380) .. controls (1247,460) and (1080,460) .. (913,460);
+\node[flowlbl] at (1080,488) {\textls[100]{COLLATERALISE}};
+\draw[flow] (1407,273) -- (1520,273);
+\node[flowlbl] at (1464,261) {\textls[100]{USD.*}};
+\draw[flow] (1540,327) -- (1427,327);
+\node[flowlbl] at (1484,345) {\textls[100]{ASSET}};
+
+% ---- Layer headers ----
+\draw[hdrrule] (274,32) -- (389,32);
+\draw[hdrrule] (525,32) -- (640,32);
+\node[hdr] at (457,38) {\textls[180]{FUNDING}};
+\draw[hdrrule] (820,32) -- (929,32);
+\draw[hdrrule] (1050,32) -- (1160,32);
+\node[hdr] at (990,38) {\textls[180]{MARGIN}};
+\draw[hdrrule] (1290,32) -- (1398,32);
+\draw[hdrrule] (1549,32) -- (1660,32);
+\node[hdr] at (1474,38) {\textls[180]{LEVERAGE}};
+
+% ========================= MARGIN ANNOTATION =================================
+% ---- LTV ----
+\draw[ltv] (723,270) -- (723,350);
+\draw[wline] (585,276) -- (585,344);
+\node[annotS, text=black, anchor=base west] at (555,344) {\textls[100]{LTV}};
+\node[annot, anchor=base west] at (593,284) {\textls[100]{BORROWABLE}};
+\node[annot, anchor=base west] at (593,310) {\textls[100]{AGAINST}};
+\node[annot, anchor=base west] at (593,336) {\textls[100]{COLLATERAL}};
+
+% ---- IRM ----
+\draw[wline] (778,335) -- (888,335);
+\draw[wline] (778,335) -- (778,293);
+\draw[kink] (778,332) -- (866,322) -- (888,295);
+\fill[black] (866,322) circle [radius=2.5];
+\node[annotS, anchor=south] at (778,290) {\textls[100]{RATE}};
+\node[annotS, anchor=south] at (833,350) {\textls[100]{UTILISATION}};
+
+% ---- LIQUIDATOR ----
+\draw[ref] (553,370) -- (480,370) -- (480,250) -- (513,250);
+\node[annotS, anchor=base east] at (553,384) {\textls[100]{LIQUIDATOR}};
+
+% ---- REFERENCE PRICE ----
+\draw[ref] (1600,380) -- (1600,610) -- (723,610) -- (723,593);
+\node[annot] at (1161,628) {\textls[100]{REFERENCE PRICE}};
+
+\end{tikzpicture}
+\end{document}

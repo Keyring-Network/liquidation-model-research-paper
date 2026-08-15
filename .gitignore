@@ -1,0 +1,40 @@
+# LaTeX build artefacts
+*.aux
+*.bbl
+*.bcf
+*.blg
+*.brf
+*.fdb_latexmk
+*.fls
+*.idx
+*.ilg
+*.ind
+*.lof
+*.log
+*.lot
+*.nav
+*.out
+*.run.xml
+*.snm
+*.synctex.gz
+*.synctex(busy)
+*.toc
+*.vrb
+*.xdv
+*.dvi
+
+# Intermediate figure builds
+vault-flow-diagram.pdf
+
+# Editor and OS noise
+.DS_Store
+Thumbs.db
+*.swp
+*~
+.vscode/
+.idea/
+
+# The only PDF tracked in this repo is clearing-models.pdf, which CI builds and
+# commits on merge to master. Everything else is transient.
+*.pdf
+!clearing-models.pdf

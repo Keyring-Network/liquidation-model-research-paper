@@ -1,0 +1,397 @@
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[margin=2.6cm]{geometry}
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs}
+\usepackage{eurosym}
+\usepackage{enumitem}
+\usepackage{xcolor}
+\usepackage{listings}
+\usepackage{graphicx}
+\usepackage[colorlinks=false,pdfborder={0 0 0}]{hyperref}
+
+\definecolor{codebg}{gray}{0.96}
+\definecolor{codekw}{rgb}{0.13,0.29,0.53}
+\definecolor{codecomment}{rgb}{0.35,0.45,0.35}
+\lstset{
+  language=C,
+  basicstyle=\ttfamily\small,
+  keywordstyle=\color{codekw}\bfseries,
+  commentstyle=\color{codecomment}\itshape,
+  backgroundcolor=\color{codebg},
+  frame=single, framerule=0pt,
+  breaklines=true,
+  columns=fullflexible,
+  morekeywords={uint256,function,external,returns}
+}
+
+\newcommand{\model}[2]{\subsection{#1}\noindent\textit{#2}\medskip}
+
+\begin{document}
+
+\begin{titlepage}
+\centering
+\vspace*{3cm}
+{\LARGE\bfseries The Changing Role of the DeFi Liquidator\\[0.3em] and Implications for Protocol Design\par}
+\vspace{2cm}
+{\large A. McFarlane\footnotemark[1] \quad S. Gujrati\footnotemark[1] \quad J. Zierold\footnotemark[1]\par}
+\footnotetext[1]{Keyring.Network Ltd.}
+\begingroup
+\renewcommand\thefootnote{}
+\footnotetext{The authors thank Kasper Pawlowski and Dariusz Glowinski of Euler Labs for helpful discussions.}
+\endgroup
+\vspace{0.5cm}
+{\normalsize 13 August 2026\par}
+\vspace{2.5cm}
+\begin{abstract}
+\noindent Tokenised assets are increasingly entering on-chain lending markets as collateral, but delayed settlement violates assumptions made in typical decentralised finance (DeFi) architectures. Existing liquidation mechanisms cast the liquidator as a coordinator and infrastructure operator, converting collateral to cash in one transaction; once an exit takes time, the role materially changes, taking on market and credit risk. This means a defaulted position can sit underwater with no willing liquidator. We review how clearing houses deal with distressed positions, examine the liquidation designs of relevant DeFi protocols, and generate candidate mechanisms across design lenses, subjecting each to independent agentic adversarial review, with a second generation round under a set of constraints. The constraints are specified to minimise co-ordination and balance-sheet requirements whilst maximising trust. The strongest design was found to be where the protocol applied a discounted oracle price inside the same transaction as a liquidation event, enabling liquidators to price correctly. In the case of no liquidators, a backstop was found to exist where a protocol could redeem the collateral itself, paying lenders from settlement. In the later stage of the paper we discuss the feasibility of these solutions on a protocol-by-protocol basis, finding Euler v2 and Aave v4 to be the most suitable.
+\end{abstract}
+\end{titlepage}
+
+\tableofcontents
+\newpage
+
+\section{How traditional finance clears and liquidates}\label{sec:tradfi}
+
+The clearing house model has been iterated heavily over time in traditional markets and provides a strong guide for best practices in the frontier markets of decentralised finance. This section reviews that practice, from clearing-house regulation through haircut practice and the levered-credit market to the largest liquidations on record, and maps each part to current DeFi lending.
+
+\subsection{Central clearing and its regulation}
+
+Central clearing replaces bilateral exposure with a mutualised one: by novation, each trade is replaced by two contracts with the central counterparty (CCP), which becomes buyer to every seller and seller to every buyer. The CCP therefore carries the market risk of any member default and manages it through a strictly ordered waterfall. Losses are borne first by the defaulting member's initial margin, then by that member's contribution to the default fund, then by a dedicated slice of the CCP's own capital (its ``skin in the game''), and only then by the mutualised default fund contributed by the surviving membership, behind which sit further recovery assessments. The defaulter pays first, the operator has its own money at stake ahead of the survivors, and mutualisation is the last prefunded resort rather than the first.
+
+On a default the CCP inherits an unmatched book and must neutralise it inside the margin period of risk (MPOR), the assumed interval between the last successful margin collection and the completed liquidation of the inherited positions. The sequence is hedge, port, auction: hedge the inherited positions to cap the immediate market risk, port client positions and their collateral to solvent members, and auction the residual positions to the membership. Discipline enters at the auction: members are obliged to bid, and in several regimes weak or derisory bids are penalised by juniorisation, so that the default-fund contributions of low-quality bidders are consumed ahead of those of members who priced the positions seriously. Mandatory bidding replaces voluntary participation with a priced obligation at liquidation.
+
+The post-2008 framework writes these magnitudes into regulation. The CPMI-IOSCO principles for financial market infrastructures require prefunded resources sufficient to withstand the default of the participant to which the CCP has its largest exposure or, under the stricter Cover 2 standard, of the two participants with the largest combined exposure~\cite{pfmi}; EMIR sets the default fund at the largest exposure or at the second- and third-largest exposures combined, whichever is greater~\cite{emir}. The Commission's technical standards floor margin confidence at 99.5\% for over-the-counter (OTC) derivatives and 99\% for other instruments, and fix the assumed liquidation period at no less than five business days for OTC derivatives and two business days otherwise, the regulatory MPOR~\cite{cdr153}. Eligibility completes the regime: CCPs restrict what they clear so that a default can be liquidated inside a short MPOR, and products that cannot be liquidated or hedged inside days are simply refused.
+
+\subsection{Episodes at clearing houses}
+
+Clearing houses have survived or failed on whether their plans for liquidating a default held up. The Caisse de Liquidation in Paris failed in 1974 when sugar futures defaults overwhelmed it; the Kuala Lumpur Commodity Clearing House collapsed in 1983; the Hong Kong Futures Guarantee Corporation needed a government bailout in 1987~\cite{norman}. Lehman Brothers in 2008 is the case where the machinery worked: LCH SwapClear hedged and auctioned a portfolio of \$9~trillion notional across 66,390 trades, consuming roughly one third of Lehman's approximately \$2~billion of initial margin, with no recourse to the mutualised fund~\cite{lch}. Nasdaq Clearing in September 2018 is the case where it did not, when Einar Aas's concentrated Nordic power-spread positions defaulted: Aas's own collateral was exhausted first, and the roughly \euro{}114~million of losses above it absorbed about \euro{}7~million of Nasdaq's own capital and about \euro{}107~million from a mutualised commodities default fund of only about \euro{}166~million~\cite{aas}, because the invited bidders, reported as fewer than ten, were not obliged to bid~\cite{aasauction}; Nasdaq's Close Out Provider regime, which contracts bidders in advance, was introduced only afterwards, as a reform. When liquidation is impossible rather than merely expensive, the CCP faces the LME's choice of March 2022, when the exchange cancelled eight hours of nickel trades rather than clear the default~\cite{lme}.
+
+Each layer has an on-chain counterpart. Borrower collateral is initial margin; liquidation penalties and protocol-controlled insurance or backstop modules are the skin-in-the-game and mutualised tiers; and the liquidation auction, fixed-spread or Dutch, is how the position is liquidated, with an effective MPOR set by oracle cadence and block time rather than by regulation~\cite{cdr153}. Collateral whitelisting replicates CCP eligibility: protocols admit assets only where liquidator depth can clear the position inside minutes. Redemption-gated tokenised assets violate both preconditions simultaneously: the asset cannot be sold inside the assumed window because the gate throttles exit, and no liquid hedge exists while it is throttled. Lehman cleared because five days of hedging into liquid rates markets sufficed and members were obliged to bid; Nasdaq 2018 shows the outcome when the obligation is absent; redemption-gated collateral removes both conditions at once.
+
+\subsection{Haircuts and margin outside central clearing}
+
+Outside central clearing, secured funding terms are set bilaterally, and the haircut is the primary risk parameter. In normal conditions short-dated US Treasuries finance at haircuts of roughly 0--2\%, investment-grade corporate credit at 4--8\%, and listed equities at around 15\%; structured products, which financed at near-sovereign terms before the crisis, have carried materially higher haircuts since 2008. Gorton and Metrick document the stress dynamic directly: their index of bilateral repo haircuts on securitised collateral rose from roughly zero in early 2007 to an average of about 45\% by late 2008, and several categories, including subprime ABS and AAA-rated CDOs, went to 100\%~\cite{gortonmetrick}. A 100\% haircut means the collateral became ineligible and could not be financed at any haircut; it does not mean the collateral was priced at zero.
+
+Regulatory floors, supervisory haircuts, and crisis market haircuts are three different quantities, though they are often cited alongside one another. Post-crisis regulation codified parts of the crisis experience: the FSB's numerical haircut floors for non-centrally cleared securities financing transactions set minimum haircuts by collateral type and maturity~\cite{fsb}, and the Basel framework's supervisory haircuts for repo-style exposures are calibrated to a 10-day holding period with daily remargining~\cite{basel}. The first two are static minimum terms set by rule; only the last describes stress behaviour, including discontinuous moves to ineligibility that no floor anticipates.
+
+Margining in prime brokerage fails differently: the limiting factor is information, not the schedule. In March 2021 Archegos held concentrated single-name equity exposure synthetically, through total-return swaps across multiple prime brokers, and no dealer saw the aggregate position. When the concentrated names gapped, losses were approximately \$5.5~billion at Credit Suisse~\cite{archegos}, with significant potential losses at Nomura~\cite{nomura}, Morgan Stanley, UBS, and MUFG. Each dealer had margined its own slice by its own lights; no counterparty setting the margin could see the system-level concentration.
+
+Advance-rate margining can constrain every client at once. Private banks extend Lombard credit against liquid securities portfolios at published advance rates, and in aggregate the March 2020 sell-off produced a broad private-bank margin-call wave as equity and credit positions breached maintenance levels simultaneously, forcing client deleveraging into falling markets.
+
+\subsection{Financing gated assets}
+
+Where the underlying cannot be sold quickly, practice changes qualitatively. Net-asset-value (NAV) lending against private-fund interests is done at loan-to-value (LTV) ratios of 5--25\%, with quarterly covenant tests, grace periods of 10--30 days, and enforcement that runs through fund transfer consents over months rather than days. Secondaries pricing, the usual reference for valuing these interests, consists of broker-survey averages with a known selection caveat: observed discounts describe forced sellers, not the average fund. Subscription-line finance showed its own concentration risk when Silicon Valley Bank, then a leading provider of capital-call facilities, failed in March 2023, disrupting drawdown funding across private markets~\cite{svb}.
+
+The haircut is set by how long liquidation takes, and that assumes an exit that a redemption gate removes. The standard convention scales value-at-risk by the square root of time. The square-root rule prices a position you could have traded out of and chose not to; it does not price a position you are contractually barred from trading. For redemption-gated collateral, square-root scaling is therefore a floor. Traditional finance resolves this by financing gated assets at tiny LTVs rather than clearing them at high ones.
+
+Current DeFi lending repeats each piece of this practice. Overcollateralised lending and borrowing apps set per-asset loan-to-value ratios and liquidation thresholds that assume continuous, just-in-time liquidation, the on-chain analogue of a 10-day, daily-remargined supervisory haircut. Redemption-gated tokenised assets violate that assumption: during a gate no liquidator can sell, so the auction mechanism that is supposed to enforce the margin cannot run. Traditional practice already offers usable reference points: NAV-lending LTVs of 5--25\% as the ceiling for gated collateral; eligibility lists that reproduce the 100\% haircut as a listing decision rather than a price; cross-venue aggregation as the lesson of Archegos for positions spread across isolated pools; broker-survey secondaries prices as an oracle input, remembering their distressed-seller bias; and subscription-line experience as the model for credit against limited-partner (LP) commitments. Margin for gated assets must therefore be set at origination, as in Lombard and NAV practice; it cannot be delegated to liquidation at the margin call.
+
+\subsection{Levered credit}
+
+The collateralised debt position (CDP) is the on-chain instance of an older trade. Levered credit, borrowing at a floating rate against a credit asset that yields more, is one of the most popular structures in wholesale markets because it pays the holder the spread between asset yield and funding cost multiplied by the leverage. CLOs, levered loan funds, and total-return-swap portfolios all run this arithmetic. The structure performs while the spread holds and the funding rolls; its weakness appears only when someone has to exit.
+
+These positions change hands slowly. Bank loans trade on assignment documentation with agent and borrower consents, and settlement routinely runs to weeks rather than days; there is no central counterparty for loans, so each trade waits on the previous one settling~\cite{lsta}. In a falling market the pipeline itself becomes the risk, because a position marked as sold stays on the seller's balance sheet until the assignment completes. The on-chain version inherits the structure without the machinery: a CDP backed by a redemption-gated asset is a levered credit position whose exit cannot even wait on assignment, because the underlying takes a notice period plus a settlement queue to become cash.
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=\textwidth]{vault-flow.png}
+\caption{The on-chain levered credit structure, split across its funding, margin, and leverage layers. Lenders deposit into the funding vault and earn the borrow rate; the borrower posts tokenised assets into the collateral vault and borrows against them at a set LTV; the issuer provides the reference price. Clearing the borrower's position means exiting the collateral vault's contents, which is what the rest of this paper addresses.}
+\end{figure}
+
+\subsection{How large liquidations were actually executed}
+
+Large liquidations are almost never executed as simple market sales. When a leveraged portfolio is large relative to the liquidity of its underlyings, resolution has instead taken the form of negotiated recapitalisation, transfer of the portfolio to stronger hands, administered auction, or trustee-run porting; and where none of these could be organised in time, the outcome was a liquidation race.
+
+Long-Term Capital Management was resolved in 1998 by a negotiated recapitalisation that doubled as a standstill: a consortium of fourteen banks and securities firms, convened by the Federal Reserve Bank of New York, injected about \$3.6~billion of new capital into the fund in exchange for 90~per cent of the fund~\cite{ltcm}. The Federal Reserve lent nothing; its contribution was to convene the parties, set a deadline, and state credibly that simultaneous liquidation by all counterparties would crush prices and multiply everyone's losses. Positions were left in place and unwound gradually under consortium control rather than dumped into the market.
+
+Amaranth's book was transferred in 2006 rather than liquidated. Amaranth Advisors lost about \$6~billion of a \$9.2~billion fund on natural-gas futures that September, and the entirety of the energy portfolio moved to JPMorgan and Citadel at a negotiated discount, in effect a novation, with the concession reflecting what the positions would have cost to exit in the market~\cite{amaranth}. Execution took days and required exactly two solvent, willing buyers.
+
+Lehman's default in 2008 played out very differently on its cleared and its bilateral portfolios. The bilateral over-the-counter positions dissolved into chaos: disputes over closing values, collateral disputes, and claims that took years of insolvency proceedings to resolve. The cleared interest-rate portfolio, by contrast, was managed through LCH SwapClear's pre-agreed default process: hedged, auctioned to member firms obliged to bid, and wound down within weeks using the defaulter's own margin~\cite{lch}. The same default produced two outcomes; the difference was an organised process with committed participants.
+
+Porting kept MF Global's customer positions intact through the firm's failure in 2011. The trustee identified a \$1.6~billion shortfall in customer funds~\cite{mfglobal}, but customer futures positions were not liquidated into a falling market: the trustee and the exchanges arranged bulk transfers that moved customer accounts, with their collateral, to solvent clearing members. Continuity survived precisely because an administrator had the authority to move accounts intact.
+
+Metallgesellschaft in 1993 shows that execution failure can be a funding-liquidity event before it is a solvency event~\cite{metallgesellschaft}. The firm's US subsidiary hedged long-dated, fixed-price supply commitments with a stack of short-dated futures. When the oil market flipped into contango, so that distant futures sat above near-dated ones, variation-margin calls on the futures accumulated daily while the offsetting gains sat unrealised in illiquid long-term forwards. The hedge was economically sound and cash-flow fatal: the firm survived only because a banking consortium supplied the liquidity to keep funding the margin.
+
+Archegos in 2021 is the control case in which coordination failed~\cite{archegos}. Facing margin calls, the fund asked its prime brokers for a standstill; the brokers instead raced for the exit. The first movers sold early and escaped near-whole; the slow movers lost billions as block sales collapsed the shared underlyings. No consortium formed and no standstill held, and the absence of coordination was itself the loss multiplier.
+
+\subsection{The DeFi record}
+
+On-chain lending has now reproduced most of these pathologies at machine speed. In MakerDAO's Black Thursday of March 2020, collateral auctions cleared at zero bids as keeper infrastructure failed, handing liquidators roughly \$8~million of collateral for nothing and leaving about \$5.7~million of bad debt; the protocol recapitalised ex post by minting and auctioning MKR, a dilutive recapitalisation by token vote rather than by convened consortium~\cite{makerdao}. In June 2022, Solend's governance voted to take over a single whale account too large to liquidate on-chain, then reversed the decision within a day: an improvised standstill that did not hold~\cite{solend}. In November 2022, Aave absorbed bad debt when a large borrowed CRV position could not be liquidated into the token's thin market liquidity~\cite{aavecrv}. In April 2026, after a bridge exploit left Aave holding impaired collateral, Aave convened DeFi United, a coalition of protocols and individuals committing ether to absorb the shortfall: the clearing house's mutualised default fund, assembled after the default rather than before it~\cite{united}. In every case, final settlement depended on discretion layered over the mechanism.
+
+These failures carry over directly to current DeFi lending. Smart contracts execute atomically, so there is no settlement lag and no netting dispute at liquidation, but they coordinate like the bilateral OTC market of 1998. There is no standstill: Solend had to invent one by vote and could not sustain it. Porting does not exist on-chain: an underwater account cannot be moved intact to a solvent liquidator; it can only be sold into the market. There is no negotiated transfer of the positions: Euler recovered through negotiation, not through a mechanism~\cite{eulerexploit}. And there are no obliged bidders: MakerDAO's zero-bid auctions and Aave's CRV hole are what voluntary liquidator participation looks like when it fails. Metallgesellschaft supplies the funding-liquidity warning: a sound hedge can still fail on margin calls when one leg is illiquid. Archegos supplies the base rate for uncoordinated exit into thin collateral. Each historical failure points to a specific missing piece of protocol design, and for lending against redemption-gated tokenised assets, whose collateral cannot be sold at market speed by construction, the missing pieces are exactly the ones these episodes priced.
+
+\section{The problem in DeFi}\label{sec:defi}
+
+\subsection{How on-chain liquidation works today}
+
+DeFi lending protocols hold each loan as a CDP: the position's debt is secured by its collateral, which a permissionless liquidator can seize at a discount once the health factor falls below one. On Euler, the discount is proportional to distress~\cite{eulerdocs}:
+\begin{lstlisting}
+// discountFactor = health score = 1 - discount
+uint256 discountFactor = collateralAdjustedValue * 1e18 / liqCache.liabilityValue;
+\end{lstlisting}
+so at any moment
+\[
+\text{discount}(t) = \min\bigl(1 - H(t),\ \text{maxDiscount}\bigr),
+\]
+where $H(t)$ is the position's health factor, its liquidation-threshold-adjusted collateral value divided by its debt value; Euler's source comment calls the same quantity the health score.
+Aave v4 interpolates a bonus linearly in the health factor~\cite{aavedocs}; Aave v3 and Morpho Blue fix it per market~\cite{morpho}. All four designs assume the liquidator converts seized collateral to the debt asset in one transaction. The liquidator's intended role in these designs is coordination and infrastructure: the seizure, the sale, and the repayment settle in the same transaction, so the liquidator holds no market or credit risk at all. Under that assumption the bonus only needs to cover slippage and gas, and linking it to insolvency depth works. None of these designs can initiate a redemption against the collateral itself, which is the gap this paper works around. The mechanism that closes it is Keyring's [un]wind. When a position must exit, the adapter calls \texttt{requestRedeem} on the seized asset through the ERC-7540 interface~\cite{erc7540}; the request enters the issuer's notice period and settlement queue on the asset's own dealing terms, and the settled cash pays the debt down. The exit runs on the issuer's rails rather than through a market sale, so no third-party market maker needs to be coordinated to buy blocks, removing a core trust assumption for the issuer, and no one warehouses the asset in between.
+
+\subsection{Why it breaks for redemption-gated collateral}
+
+Tokenised assets break the assumption because their exit is not atomic: converting them to cash runs through the issuer's redemption process, a notice period plus a settlement queue, so the holding period $T$ is positive. The tokenised fund share is the leading case, and its oracle reports a smoothed monthly NAV. The liquidator's role changes with the asset: the liquidator who takes delivery is writing a bridge loan against an illiquid asset, holding market risk on its true value and credit risk on the redemption counterparty for the whole cycle. The premium for that role is a forward quantity:
+\[
+\mathrm{LB}_{\mathrm{req}} - 1 \;\approx\; (r_f - y)\,T + \kappa\,\sigma\sqrt{T} + f + p_{\text{gate}}\,\mathbb{E}[L_{\text{gate}}] + \pi_{\min}.
+\]
+Here $\mathrm{LB}_{\mathrm{req}}$ is the bonus the liquidator requires, $r_f - y$ is its funding cost net of the collateral's yield over the holding period $T$, $\kappa\,\sigma\sqrt{T}$ compensates the volatility $\sigma$ of the collateral's true value at the liquidator's confidence level $\kappa$, $f$ covers fees and gas, and $\pi_{\min}$ is the minimum profit that makes the trade worth taking. The remaining term prices the gate: $p_{\text{gate}}$ is the chance that redemptions are extended or suspended and $\mathbb{E}[L_{\text{gate}}]$ the loss that causes, and it applies only to gated assets, of which tokenised funds are the prominent example. Where the oracle prints a smoothed NAV, as it does for funds, smoothing suppresses measured volatility most in the stress that widens the gap, so a $\sigma$ estimated from published NAVs is a floor on the term it feeds. At $T = 0$ the forward terms vanish and the formula collapses to $f + \pi_{\min}$: no funding accrues, no market risk is borne, and no gate can extend, which is the execution bonus of the designs above. A redemption process sets $T$ to the full cycle from notice to settlement, and the liquidator's role changes with it, from coordinator and infrastructure operator to bearer of market and credit risk. The premium therefore depends on the holding period and the true-value risk over it, and the health factor contains neither. A position at $H = 0.99$ offers at most a 1\% discount; if the collateral's 3-month 99\% expected shortfall (its average loss in the worst 1\% of outcomes) exceeds 1\%, nobody acts. The bound for involvement is $d \ge \mathrm{LB}_{\mathrm{req}} - 1$, where $d = \min(1-H, \text{maxDiscount})$ is what the formula pays: a liquidator steps in only when the discount on offer covers the forward premium, and the capped formula passes that test only once the loss has already happened. Thirty days later the smoothed NAV has barely moved, so the discount is still 1\% and the remaining risk over the residual window is still far above it. The account is liquidatable in name and unliquidatable in fact for the entire redemption cycle, with suppliers carrying the tail.
+
+Two further facts complete the problem statement. First, $T$ is stochastic and wrong-way: redemption queues lengthen in exactly the stress that triggers liquidations, so the required premium peaks when liquidator capital is scarcest. In the motivating case of a 30-day notice period plus a 60-day settlement queue, the stress that triggers the liquidation also stretches the queue, so the residual window carries more risk, not less. Second, the margining defect is narrower than it first appears. On-chain positions are valued against the oracle every block, more often than a clearing house's daily cycle, and the exposure that variation margin would settle accrues continuously between NAV prints; a borrower who tops up or repays is paying variation margin in kind, the same way a fund running constant leverage realises it at each rebalance. What is missing is the forced settlement of the valuation: no obligation makes the borrower restore the ratio, so the margin call and the liquidation collapse into a single event.
+
+\subsection{The conservation bound}
+
+No parameter change escapes this: an oracle adjustment, a backsolve of the health factor's inputs, or a lower liquidation LTV all work the same way, manufacturing insolvency depth so that $1-H$ reads higher. Write $x^*$ for the largest discount any such scheme can deliver, and $\mathrm{LTV}_{\text{true}}$ for the position's debt divided by the collateral's true value. The feasibility bound is
+\[
+x^* \;\le\; 1 - \mathrm{LTV}_{\text{true}},
+\]
+which is conservation of value: the discount comes out of the borrower's own collateral, so a solvent position cannot fund a premium larger than the value of its collateral above its debt. A health-linear mechanism pays for risk that has already turned into loss; it cannot pay for risk that is still ahead. The bound also sets the budget for a deliberate version of the same move. Where liquidation LTVs are set at origination so the full forward premium sits inside the collateral's excess over the debt, a reprice can pay that premium out of the borrower's collateral, up to the bound and no further. That instrument is ranked first in Section~\ref{sec:models}, and the models after it carry the remainder, paying premia the buffer cannot fund with queue time banked before default or with a price discovered at it.
+
+\subsection{The constraint set}
+
+Any candidate mechanism must respect the constraints established above and in Section~\ref{sec:tradfi} together with six structural rules of the venue. The established constraints are the discount cap $\min(1-H, \text{maxDiscount})$, linear in health; the conservation bound $x^* \le 1 - \mathrm{LTV}_{\text{true}}$; oracle-speed health decay under a smoothed NAV; stochastic, wrong-way $T$; and margining that values positions continuously but never settles. The six structural rules narrow the design space further. The issuer will coordinate nothing: no priority classes, no standing bids, no buybacks, no attestations. The oracle provider is out of reach, and in the worst case the market is already deployed with an oracle route no operator can change. The lending pools are floating-rate; fixed-rate instruments are unavailable. Nobody will write options on gated tokenised assets in a tertiary market. The protocol cannot make per-position funding deals; every rate is a pool-wide state. And whatever clears the position should demand as little liquidator balance sheet as possible: a design where a bidder funds the collateral's excess over the debt, or a dated claim, beats one where they fund the full collateral value. Two further constraints rule out the familiar remedies.
+
+The clearing-house remedy, mandatory bidding, has no equivalent that generalises on-chain. Clearing houses make members bid at default auctions and punish bad bids with junior loss allocation, a legal obligation on vetted members. On-chain, only Aave can arrange the equivalent, and for two compounding reasons: its dominance in on-chain lending lets it convene liquidators, and it has the liquidity concentration to make the arrangement simple, since a monolithic protocol appointing a permissioned liquidator is just Aave contracting for Aave. A modular venue is a platform of competing curators and operators, so designating a favoured liquidation partner is a neutrality decision it must justify to every other partner.
+
+Capital parked against an event that rarely fires charges its full opportunity cost regardless of event frequency, so the standing premium equals hurdle rate times capacity for as long as the capital is parked. Stability pools, insurance funds, and backstop vaults all pay this price; Nexus Mutual's cover capacity and the Aave Safety Module both sit well below their markets' tail exposure for exactly this reason~\cite{nexus, aavedocs}. Any viable design must use capital that is dual-use, contingent, or already inside the trade.
+
+\subsection{Assumed venue features}\label{sec:baseline}
+
+The designs in Section~\ref{sec:models} assume that the venue has, or is willing to add, seven ordinary features. The borrower gets a grace period before anything is sold, in which they can add collateral, repay, or start the redemption themselves. The borrower is also the natural first bidder, because for them alone a rescue avoids the discount rather than earning it. The protocol can exit the collateral without a buyer at all, using the [un]wind adapter introduced in Section~\ref{sec:defi}: it submits the seized asset to the issuer's redemption queue and pays the debt down from settlement, so no third party ever holds the asset in between. Section~\ref{sec:models} ranks this path second on its own merits. Once a redemption is queued, the claim on the eventual cash can be packaged and sold as a dated receivable; what trades is a claim on the proceeds rather than the fund interest itself, so no buyer needs to pass the fund's transfer checks.
+
+Lenders' withdrawals are matched to the collateral's own timeline, or made asynchronous, so the vault stops promising instant exit against an asset that cannot deliver it. Supplier capital can be split into junior and senior layers, so that losses land on the junior layer first. Borrowers post extra collateral at the start, measured against the risk that can build over the redemption cycle, the way initial margin works in Section~\ref{sec:tradfi}. Every design in Section~\ref{sec:models} takes these pieces as given and has to add something beyond them.
+
+\section{Method}\label{sec:method}
+
+The ranking in Section~\ref{sec:models} comes from two rounds of proposal generation and adversarial review, the second run under the full constraint set. Five design agents each worked one lens: TradFi structured finance, issuer-side mechanisms, market microstructure, crypto-native incentive design, and origination-time risk transfer. Each proposed two to four mechanisms. Every proposal then went to an independent adversarial reviewer instructed to attack on five axes: idle capital in disguise, default-time discretion in disguise, adverse selection in who bears the tail, restatement of the baseline, and behaviour under correlated stress. Twenty proposals came back from the first round. The reviewer scored each from 0 to 10 and ruled separately on whether it survives the constraints, so survival is the ruling rather than a score threshold. That round ran before the full constraint set was assembled, and several of its best scorers fail rules recovered later: the top-ranked redemption-seniority auction requires the issuer to create and honour priority slots, and the fixed-term structure requires fixed rates. A second round therefore ran under the complete constraint set, focused on queue engineering, liability-side design, and auction microstructure that no rule touches. It produced fifteen more proposals, and several of those described one mechanism from different angles: five auction formats became the single routed model, and four queue-engineering families became the staged redemption design. Eight mechanisms survive across the two rounds, and the appendix catalogues the twenty-one invalidated proposals and near-miss variants from both rounds with the route that invalidated each.
+
+\section{Models in order of preference}\label{sec:models}
+
+Eight mechanisms survive the two rounds; this section presents them in order of preference, joined by the baseline's own redemption path, which outranks all but the first. The ordering weighs deployability today, the balance sheet a liquidator must bring, the trust surface a mechanism adds, and how much of the problem it clears by itself. One design premise organises it: the capped bonus can only pay for execution unless the oracle's price itself is moved. Duration and NAV risk must be paid with either time banked before default or a price discovered at default, and Keyring's [un]wind is the reserve under every mechanism. Each surviving model satisfies the involvement bound of Section~\ref{sec:defi} by one of these routes, and the redemption path does not need a liquidator at all.
+
+\begin{table}[h]
+\centering
+\begin{tabular}{@{}rlll@{}}
+\toprule
+Rank & Model & Family & Liquidator capital \\
+\midrule
+1 & Bounded oracle repricing & Oracle & The full debt \\
+2 & Direct protocol redemption & Queue & None \\
+3 & Staged redemption & Queue & None \\
+4 & Routed auction machine & Auction & Debt or excess \\
+5 & Two-queue netting & Liability & None \\
+6 & Assumable note novation & Liability & Collateral minus debt \\
+7 & Windowed claim batches & Auction & One window \\
+8 & Borrower premium escrow & Funding & Reduced \\
+9 & Recovery claim accounting & Loss & None \\
+\bottomrule
+\end{tabular}
+\caption{Surviving models by preference with the balance sheet each demands of a liquidator.}
+\end{table}
+
+\model{Bounded oracle repricing}{Fix the discount at its source: reprice the collateral in the liquidation transaction.}
+
+Where the market's operator controls the oracle adapter (Euler Vault Kit (EVK) vaults~\cite{eulerdocs} and any market with a configurable price route), the simplest fix is the direct one: an intermediary adapter reprices the collateral inside the liquidation transaction so the discount on offer equals the forward premium, then restores the price. The multiplier must invert the quadratic, since the price enters the liquidation once through the discount factor and once through the token conversion: a multiplier $k$ delivers realised proceeds of $1/(k^2 H)$ per unit of debt repaid, so the target discount $x$ requires $k = \sqrt{(1-x)/H}$, and the naive linear guess roughly doubles the intended payout near threshold. This holds where the discount tracks health, as on Euler and Aave v4. Where the bonus is fixed per market, as on Aave v3 and Morpho Blue, the price enters only the conversion and the realised proceeds move with a single power of the multiplier, so the same target needs $k = (1-x)(1+b)$ for a fixed bonus $b$. The adapter must be bounded to be safe: $k \in [1-\delta_{\max},\, 1]$, single use per liquidation, scoped to the position being liquidated, because an unbounded repricing capability is economically the power to drain the vault. A permanent haircut is the same instrument held at a constant $k = 1-\delta$, with the caveat that at the liquidation trigger it delivers premium $\approx \delta$ linearly, so it should be set at the full target.
+
+It is the simplest model in the set, and it can be deployed today on any venue with an adjustable price route. It needs one adapter contract, no new market structure, and no keeper scheduling. It satisfies the entire constraint set: the issuer is untouched, rates are untouched, no option is written, no capital stands anywhere, and the premium is paid by the party the conservation bound designates, the borrower, whose collateral funds the discount.
+
+The model pays only out of borrower equity and runs only where an operator can be trusted with the price route. The bound $x^* \le 1 - \mathrm{LTV}_{\text{true}}$ holds: the reprice can pay any premium up to the borrower's collateral above the debt and nothing beyond it, so liquidation LTVs must be set with the full forward premium inside that excess. When the payout the discount implies exceeds the collateral actually posted, the liquidation takes everything the borrower has, and pushing a position through that branch socialises the shortfall in the same transaction. The operator trust surface is real even when bounded, and it is the one thing the mechanisms below avoid. The model is also unavailable exactly where Morpho-style immutable oracles rule the route out, which is why the rest of the ranking exists. The natural composition is for the reprice to attract the liquidator, who then exits through Keyring's [un]wind, so the warehousing premium the reprice must pay shrinks to the queue's residual tenor when the staged schedule below has been running.
+
+\model{Direct protocol redemption}{Exit without a buyer: the protocol redeems the seized collateral through the issuer and pays lenders from settlement.}
+
+At default the protocol does not look for a buyer at all. It calls \texttt{requestRedeem} on the seized asset through the [un]wind adapter, the request enters the issuer's notice period and settlement queue, and the settlement cash pays the debt down, with any residue left to loss accounting (model 9). No liquidator participates, so the mechanism needs no discount, no bonus, and no balance sheet, and the premium formula of Section~\ref{sec:defi} is never invoked. The cost is carried by lenders as duration: they wait out the redemption cycle holding a dated claim on the proceeds, a wait that is priced because suppliers are term-matched and floating under the features of Section~\ref{sec:baseline}.
+
+It is the simplest complete answer wherever the price route cannot be touched: nothing is sold, no one is asked to bid, and the only trust surface is the issuer's ordinary redemption process, which every holder accepted at subscription. It ranks below the reprice because it pays with lenders' time instead of the borrower's collateral, so the position clears slowly and the pool carries the redemption-cycle risk meanwhile. The models after it exist to beat that cost: the staged redemption schedule starts the same queue before default, and the auction formats find a buyer who prices the wait.
+
+The path needs custody from the venue: the protocol must be able to move an unhealthy position's collateral into its own hands, and on the incumbent lending apps collateral leaves an unhealthy position only through a third-party liquidation, so the design fits venues whose collateral already sits in a wrapper the protocol controls, and arrives elsewhere with the wrapper itself. Where it can run, its residual risk is duration concentration: many positions defaulting into the same issuer's queue at once leave suppliers collectively holding a lengthening stack of dated claims, and a suspended queue stops settlement on any known schedule. The exposure ceilings bound the first, and a realised suspension resolves through the recovery-share format of the auction machine (model 4) and loss accounting (model 9).
+
+\model{Staged redemption}{Queue only when health deteriorates; one-way and event-driven.}
+
+The collateral adapter encodes a public schedule $f(H)$: the fraction of the position that must sit in \texttt{requestRedeem} state as a function of health, for example 10\% below $H = 1.15$, 40\% below $1.08$, 100\% below $1.03$. Any keeper can enforce the schedule; the CDP stays open, the borrower keeps the fund economics until settlement, and settled cash pays debt down if the position is in deficit. Nothing is queued while the position is healthy, so there is no standing churn against the fund and no yield drag in normal states; the first redemption request is submitted at the first print that registers the deterioration, which is earlier than default and therefore cheaper than the alternative. Smoothing bounds the gain: a print that lags true value starts the clock into the same stress that lengthens the queue, so the residual tenor the schedule buys is shortest in exactly the states where $T$ is longest, and the schedule $f(H)$ should carry that lag in the width of its steps rather than in the trigger. In the rare case health recovers above a threshold, the pending request is cancelled or the settled claim re-deposited, a cost the borrower carries for having operated near default. The schedule is Keyring's [un]wind run early, the borrower's own self-liquidation made rule-based, and two companion mechanisms price it: a valuation rule whose haircut on a queued claim shrinks as the claim gets closer to settlement, read from the claim's request timestamp and the settlement times of completed redemptions through Keyring's [un]wind, so partially queued positions support more debt while a lengthening queue widens the haircut again; and exposure ceilings set by realised settlement times from actual redemptions through Keyring's [un]wind and the fund's published dealing terms, so pool capacity tracks redemption latency without any dedicated measurement traffic. The closest on-chain relative is LLAMALEND, which converts collateral to the debt asset gradually as its price falls; the staged schedule does the same job through the issuer's redemption queue instead of through a market~\cite{llamalend}.
+
+By the time $H < 1$ arrives, part of the position is already near-dated, the residual tenor is short, and either the reprice or the ordinary bonus covers what remains. The liquidator balance sheet is zero on the queued fraction and every trigger is a permissionless call.
+
+A standing rotation version of this idea, keeping a fraction of every position perpetually in the queue, fails the constraint set and sits in the appendix. Rotating $1/n$ of the fund each cycle interpolates between full investment as $n \to \infty$ and full exit at $n = 1$, so its protection is purchased one-for-one with forgone yield, which is standing capital denominated in carry, and the perpetual redeem-and-resubscribe traffic invites exactly the issuer friction the coordination rule exists to avoid. The staged version spends queue time only in states where the alternative is a liquidation.
+
+Two tails fall outside the schedule. A NAV gap through every step in one block receives no protection from it; that tail belongs to loss accounting (model 9). A fund-level gate suspension halts queued requests for as long as the fund keeps redemptions closed, so Keyring's [un]wind reserve stops paying on any known schedule. Provision for that state is made at origination, where the chance of suspension belongs in the admissible LTV, and the exposure ceilings cap how much of the pool faces any one fund. A realised suspension resolves through the recovery-share format of the auction machine (model 4), which pays lenders cash today against whatever the redemption request eventually settles, and any residue is left to loss accounting (model 9).
+
+\model{Routed auction machine}{One state machine of five formats, each with unwind as its reserve.}
+
+After the grace period, the position routes by size and market depth into one of five permissionless formats, each carrying Keyring's [un]wind as an explicit reserve. That reserve is computable on-chain: it is the redemption value implied by the protocol's own last settled redemption for the share class, less the debt accrued to the expected settlement date at the prevailing pool rate, less a haircut on the estimate. Small books run a descending clock on the assumable note's value above its debt (model 6): the winning taker assumes the debt at the prevailing pool rate and posts only that excess, same-block takers resolve by an intra-block runoff, and if the clock descends to the reserve untaken, the position converts permissionlessly to Keyring's [un]wind. Clustered books batch instead: claims from all distressed positions in the same share class and redemption window pool into uniform-price batch auctions on a daily cadence, one batch per window, producing a term structure of claim discounts, so duration specialists self-select into tenors the way they do in uniform-price Treasury auctions. Where the borrower should keep as much of the position as possible, a stream of continuous partial fills at a ladder price that offers the deepest discount first repays pro-rata debt and halts the moment $H \ge 1$, so the position is liquidated only as far as needed. Where the NAV is contested and opaque, an ascending auction with fully escrowed bids and an anti-snipe extension aggregates the private information the smoothed oracle hides, the format regulators use to sell spectrum, with escrow living only for the auction's hours. Where the position is deep underwater with positive recovery, the bid currency is a senior share $s$ of realised redemption proceeds, a credit-event auction run on realised recovery rather than on a defaulted bond: the winner pays the accrued debt in cash today, lenders exit at par immediately, the borrower keeps the junior residual to stay aligned, and $R$ is measured as cash the protocol's own redemption request actually receives.
+
+The machine ranks fourth because it meets the auction requirement while staying inside every constraint. The bidders are an open set of volunteers, and borrower self-bidding is welcome in every format. Capital is committed just in time and refunded in the same transaction, price formation replaces the capped bonus, and every step executes by rule.
+
+Thin participation degrades each format to its reserve, which is Keyring's [un]wind; the design treats that as routing to a known destination rather than as a deadlock, and the true cost is duration carried by lenders who are term-matched and floating.
+
+\model{Two-queue netting}{Clear the borrowers' redemption queue against the lenders' withdrawal queue.}
+
+At default, seized claims (or the assumable note itself) are offered first to the pool's own exit queue: suppliers in the withdrawal queue who have opted in to in-kind assignment can take them at a rule-based conversion price. This is the exchange-traded fund's in-kind redemption, run inside the pool: a taker's supply claim is extinguished against the asset, so the pool nets a liability it cannot service today against an asset it cannot sell today, atomically, with no external cash. The buyers are suppliers who already intended to exit and are buying a dated exit they can price; matching is longest-waiting-first at a uniform batch price, and if too few suppliers take, the position fails over to the external auction machine.
+
+It clears with capital the pool already owes, since the takers are suppliers waiting to exit, so the liquidator balance sheet is zero. It ranks below the auction machine because it depends on the withdrawal queue being populated at the moment of default, which makes it the first venue tried, with whatever it cannot place passing to the formats above.
+
+The failure mode that matters is correlated flight: withdrawals dry up exactly when claims need selling, which is why the queue is the first venue rather than the only one. Adverse selection, the risk that only the best-informed takers show up, is bounded by uniform per-tenor pricing.
+
+\model{Assumable note novation}{Bidders buy the position itself, funding only the collateral's excess over the debt.}
+
+Each position is minted at origination as a transferable note that owns the collateral lock and owes the debt at the pool's global borrow index, so the note itself, not the collateral, is what a bidder buys. Novation here is the same legal move the clearing house makes in Section~\ref{sec:tradfi}: the contract is rewritten around the buyer, debt and collateral move together, and the pool simply faces a new holder. Assignment is atomic: the assignee pays the seller the agreed excess over the debt in the transaction that moves the wrapper. Pre-default it is a portable-mortgage market; post-trigger it is the instrument the Dutch note prices. Capital demanded of the bidder falls from the full collateral value to its excess over the debt, roughly $3.3\times$ less at 70\% LTV, and the debt terms transfer unchanged, so every rate stays pool-wide. The reduced outlay carries funding-rate risk: the assignee holds the debt at the pool's floating rate until the note exits, so a liquidated CDP passed through Keyring's [un]wind is, in effect, a dated floating-rate claim on the redemption proceeds, a small structured rates product priced as one at auction.
+
+The bidder funds only the collateral's excess over the debt rather than the full collateral value, which widens the set of possible takers at default. It ranks below two-queue netting because it still needs an external bidder holding capital for the excess over the debt, where netting clears against suppliers already inside the pool, and much of its value arrives as the instrument the Dutch note prices rather than as a clearing path of its own.
+
+\model{Windowed claim batches}{Sell the redemption claim one dealing date at a time.}
+
+When a position enters Keyring's [un]wind, the protocol-side redemption request is tokenised as sequential dated claims matching the fund's dealing windows across the notice-plus-queue structure, each auctioned separately. Each claim is small, dated, and senior, so a specialist can fund one window without warehousing the whole cycle; the later claims carry the duration premium explicitly, and the term structure the window batches produce gives them a market price. This differs from the baseline in Section~\ref{sec:baseline}, which auctions the queued claim as one dated receivable: here the claim is split by dealing window and priced against the term structure.
+
+It shrinks the capital any single specialist must bring to one dated window instead of the full tenor. It ranks below novation because it starts only after a position has entered Keyring's [un]wind, so it improves the price of an exit already underway rather than attracting the bidder who clears the position in the first place.
+
+\model{Borrower premium escrow}{The forward premium, funded in cash by the only party the conservation bound permits.}
+
+The borrower funds the forward premium in cash, so the discount cap is never reached. Alongside the gated shares the borrower posts a liquid escrow taken from a forward-premium curve that follows the measured state of the redemption queue; it sits outside the health computation and funds keeper bounties for the staged-redemption layer. At default the escrow is the pot the auction machine's bidders compete over. It is a funding layer under models 3 and 4, its carry cost set against the leverage cost of simply lowering the LTV. The escrow is borrower capital already inside the trade, posted by the party the conservation bound designates, and it funds the staged-redemption keeper bounties in every state instead of sitting against an event that rarely fires. What it does not escape is the cash cost to the borrower, which is why it ranks below the strips.
+
+It pays the forward premium with money that is certain to be there, because the borrower posted it at origination. It ranks below the claim batches because the escrow carries a cash cost on every open position in every state to cover a rare event, where the batches commit capital only once a redemption through Keyring's [un]wind exists, and because it funds the mechanisms above rather than clearing anything by itself.
+
+\model{Recovery claim accounting}{When the residue is a loss, write it down at once and claw it back from future margin.}
+
+A resolved workout with residual loss reduces the supplier exchange rate immediately, removing the bad-debt overhang that creates first-mover runs, and mints suppliers a pro-rata recovery claim paid from a pool-wide surcharge on future borrow margin until the loss plus carry is repaid, the recovery assessment of a clearing-house waterfall run ex post. The surcharge applies to every borrower equally, as the per-position-deals rule requires. Combined with a junior--senior split of existing supply, this is the loss-absorption layer for the tail nothing above can reach. Existing supply capital absorbs the loss, future borrow margin repays it at a pool-wide spread, and no capital stands anywhere waiting for the event.
+
+The claim repays only at the rate future borrow demand supports. A loss large enough to shrink that demand stretches the repayment horizon, and a pool that loses its borrowers entirely leaves the claim unpaid. This is why the exposure ceilings of model 3 are measured against pool capacity rather than against a single position: the ceiling bounds the loss relative to the margin base that has to retire it.
+
+It handles the residue after every mechanism above has run. It ranks last because it allocates a realised loss instead of clearing a live position: every model above it exists so that this layer fires rarely.
+
+\section{Protocol adaptability to liquidation}\label{sec:protocols}
+
+Protocols differ in how adaptable they are: how much each can host depends on how much of its liquidation path it lets an integrator change. The direct-redemption path adds a venue requirement of its own: the collateral must sit in a wrapper the protocol can move at default. On the incumbent lending apps, an unhealthy position's collateral leaves only through a third-party liquidation, so there the wrapper arrives first and the path follows it.
+
+Aave v3 and v4 can host haircuts that shrink as a queued claim approaches settlement, and the exposure ceilings, through their existing risk parameters, and retain the option of permissioned liquidators~\cite{aavedocs}. Version 4 goes further. Its hub-and-spoke design lets governance add a new spoke without migrating liquidity, so a spoke written around the redemption adapter can be introduced alongside the existing ones, and its planned segregated-collateral spoke would put the collateral in the protocol's own custody. Its liquidation engine already runs two of this paper's ideas: the bonus rises linearly as the health factor falls, the case where the reprice's multiplier enters the liquidation twice, and liquidations repay only enough debt to restore a spoke-level target health factor, a single step of what the continuous-fill stream makes continuous~\cite{aavedocs}. The staged redemption schedule still needs an adapter: a risk parameter is an input to the health computation and cannot initiate a redemption request against the collateral. Permissioned liquidators are an option on Aave, because its dominance in on-chain lending and its liquidity concentration sit in a single protocol with no other partners to answer to. This is a venue-level supplement, not part of the mechanism set: everything ranked in Section~\ref{sec:models} is designed to run whether or not it exists.
+
+Euler v2's vault kit accepts custom collateral adapters, which is where the staged redemption schedule, the valuation rule that shrinks haircuts as settlement approaches, and the assumable note wrapper live most naturally; its reverse-Dutch discount is the native ancestor of the continuous-fill stream~\cite{eulerdocs}.
+
+Kamino is the closest existing relative of the pre-default layer. Its risk engine already runs per-asset deposit caps against a measured risk score, and its auto-deleverage mechanism lowers those caps under stress and unwinds the positions nearest to liquidation after a notice period, with a penalty that escalates until the position is back inside the cap~\cite{kamino}. Its liquidations are partial, with a bonus that scales with how far the position is past its threshold. The exposure ceilings of model 3 are a measured version of its deposit caps, the staged redemption schedule is its auto-deleverage pointed at the redemption queue, and the stream format is its partial liquidation made continuous. What it cannot do is start a redemption against the collateral: obligations hold collateral inside the program's accounts, so the redemption adapter would sit in the market's collateral path, the same custody question as elsewhere.
+
+Morpho's first version is the hard case the constraint set anticipates, and by now the legacy one. What a Blue market fixes at creation is its oracle address, so a new market can be created around an operator-controlled adapter and host the reprice, at the price of migrating liquidity to it~\cite{morpho}. An existing market whose deployed oracle admits no controllable route has no in-market lever, so for it everything here deploys in the periphery: the pre-liquidation contracts provide the hook, the assumable wrapper carries the position, and the auction machine clears it; markets whose oracles cannot register Keyring's [un]wind settlement carry the lowest ceilings. The only control point left on such a market is the collateral token itself, and baking the redemption controls into the token asks the issuer to build them, which is the coordination the constraint set rules out. The Midnight line is where this changes: its markets stay immutable but accept up to two gate contracts at creation, one of which restricts who may liquidate, its liquidations realise bad debt immediately rather than after full seizure, and its vaults carry an adapter architecture~\cite{midnight}. A new Midnight market can therefore ship with the redemption adapter and a designated liquidator set written in from the start.
+
+Third-party adapters widen what is possible on every venue. Products like IPOR's Fusion vaults already coordinate capital across lending markets through composable connector contracts, and the same machinery could in principle coordinate turning a market off and on around a collateral problem~\cite{ipor}. The catch is that turning a market off means moving its borrow positions, which is porting: on an incumbent Morpho market the positions would have to migrate to a new market, since a deployed Blue market cannot be gated; on the Midnight line, gates of exactly this kind can be written in at creation~\cite{midnight}.
+
+\section{Composite architecture}\label{sec:composite}
+
+The models compose into a single state machine that runs entirely by rule. Its core is the requirement that survives every constraint: an auction that bids these positions out of the pool, run by a loose set of voluntary bidders with the borrower first among them, with the other layers wrapped around it. On venues with an adjustable price route, the reprice comes first, and everything below composes with it. The build order follows the ranking. A venue ships the reprice where the price route allows it, direct redemption where it does not, the staged redemption schedule and its ceilings, and loss accounting; that set clears the states the ranking says are clearable and needs one redemption adapter everywhere, the reprice adapter where the price route allows it, one keeper schedule, and one accounting change. The auction formats are demand-led additions, added as the pool grows large enough that a discovered price beats Keyring's [un]wind reserve. Adaptive ceilings set aggregate exposure by the measured redemption latency. The staged schedule redeems early as health decays, shrinking the residual tenor in the states where the risk is concentrated. A default enters the grace period, where the borrower can top up, self-bid, or self-unwind while keeping the CDP, de-levering at NAV rather than at a discovered discount, the cheapest clearing event the system can produce. Unresolved positions route by size and depth into the auction machine: the descending note auction for small positions, the batch auctions for clustered ones, the continuous stream for borrower-friendly defaults, the escrowed ascending auction for contested NAV, and the recovery-share auction for deep underwater positions with value left. The two-queue netting is tried first whenever exiting suppliers are present. Every format falls back permissionlessly to unwind, whose settlement pays lenders on the fund's own rails. What remains is a realised loss, recognised immediately and recovered from future margin. No layer holds standing capital, none needs the issuer or the oracle provider, and every rate is pool-wide. On three of the five auction formats the largest balance sheet a bidder must bring is the excess of collateral over debt on a single position, while the escrowed tournament locks bids for the hours it runs and the recovery-share Dutch has its winner pay the accrued debt in cash against a senior claim on the eventual proceeds; the reprice path has its taker fund the residual debt and recover it through the queue, a demand the staged schedule shortens by submitting redemptions before default.
+
+\clearpage
+\appendix
+
+\section{Invalidated models and their invalidating routes}\label{sec:invalidated}
+
+\begin{table}[h]
+\centering
+\begin{tabular}{@{}lll@{}}
+\toprule
+Model & Family & Invalidating route \\
+\midrule
+Redemption seniority auction & Issuer & Issuer coordination \\
+Standby primary allocation & Issuer & Issuer coordination \\
+Priority redemption class & Issuer & Issuer coordination \\
+Primary cross liquidation & Issuer & Issuer kill switch \\
+Issuer NAV advance & Issuer & Issuer coordination \\
+Issuer bonded undertaking & Issuer & Issuer coordination \\
+Issuer fee escrow & Issuer & Issuer wrong way \\
+Fixed-term put & Term & Fixed rates \\
+Pre-sold firm bid & Options & Tertiary option writing \\
+Restaked commitments & Options & Tertiary option writing \\
+Liquidator franchise & Flow & Standing subsidy \\
+Commitment notes & Capital & Forfeit option \\
+Member auction & Capital & Prefunded stake \\
+Standing bids & Capital & Escrowed idle capital \\
+Spread forward & Cashflow & Prepayment kills strip \\
+Collared forward & Cashflow & Unfunded refund \\
+Rolling firm bids & Capital & Degrades to baseline \\
+Funding rate discounts & Rates & Per-position deals \\
+Queue slot swaps & Issuer & Fund queue reordering \\
+Rolling redemption ladder & Queue & Yield drag \\
+Oracle provider fixes & Oracle & Provider unavailable \\
+\bottomrule
+\end{tabular}
+\caption{Invalidated proposals with their invalidating routes.}
+\end{table}
+
+Most entries in the table fail on one of three routes. Anything touching the issuer fails the coordination rule, and that includes the highest-scoring proposal of the first ideation round, whose priority-slot auction needed the fund to create, cap, and honour the slots. Designs whose worst case is forfeiting a bond or fee reintroduce default-time discretion in exactly the states the facility exists for. Anything sold as an option requires a writer in a tertiary market that has no natural sellers. The oracle-provider route in the table is the Morpho case: markets whose price feed is immutable and whose provider is out of reach. The reprice ranked first in Section~\ref{sec:models} answers a different case: the operator, not the provider, controls the price route.
+
+\clearpage
+\begin{thebibliography}{29}
+\small
+
+\bibitem{pfmi} Committee on Payment and Settlement Systems and Technical Committee of the International Organization of Securities Commissions, \emph{Principles for Financial Market Infrastructures}. Basel, Switzerland: Bank for International Settlements, Apr. 2012.
+
+\bibitem{emir} Regulation (EU) No 648/2012 of the European Parliament and of the Council of 4 July 2012 on OTC derivatives, central counterparties and trade repositories, \emph{Official Journal of the European Union}, L 201, pp. 1--59, Jul. 2012.
+
+\bibitem{cdr153} Commission Delegated Regulation (EU) No 153/2013 of 19 December 2012 supplementing Regulation (EU) No 648/2012 with regard to regulatory technical standards on requirements for central counterparties, \emph{Official Journal of the European Union}, L 52, pp. 41--95, Feb. 2013.
+
+\bibitem{norman} P. Norman, \emph{The Risk Controllers: Central Counterparty Clearing in Globalised Financial Markets}. Chichester, U.K.: Wiley, 2011.
+
+\bibitem{lch} LCH.Clearnet Group, ``\$9 trillion Lehman OTC interest rate swap default successfully resolved,'' press release, Oct. 8, 2008.
+
+\bibitem{aas} T. Solsvik, ``Nasdaq restores Nordic clearing buffer after power trader default,'' \emph{Reuters}, Sep. 16, 2018. [Online]. Available: \url{https://www.reuters.com/article/business/nasdaq-restores-nordic-clearing-buffer-after-power-trader-default-idUSKCN1LX0IX/} (accessed Aug. 2026).
+
+\bibitem{aasauction} ``Spotlight on auction in \euro{}114m Nasdaq clearing blow-up,'' \emph{Risk.net}, Sep. 19, 2018. [Online]. Available: \url{https://www.risk.net/derivatives/5963241/spotlight-on-auction-in-eu114m-nasdaq-clearing-blow-up} (accessed Aug. 2026).
+
+\bibitem{lme} Oliver Wyman, \emph{Independent Review of Events in the Nickel Market in March 2022}. London, U.K.: London Metal Exchange, Jan. 2023.
+
+\bibitem{gortonmetrick} G. Gorton and A. Metrick, ``Securitized banking and the run on repo,'' \emph{Journal of Financial Economics}, vol. 104, no. 3, pp. 425--451, 2012.
+
+\bibitem{fsb} Financial Stability Board, \emph{Regulatory Framework for Haircuts on Non-Centrally Cleared Securities Financing Transactions}. Basel, Switzerland: FSB, Nov. 2015.
+
+\bibitem{basel} Basel Committee on Banking Supervision, \emph{The Basel Framework}, ch. CRE22. Basel, Switzerland: Bank for International Settlements, 2019 (as amended). [Online]. Available: \url{https://www.bis.org/basel_framework/} (accessed Aug. 2026).
+
+\bibitem{archegos} Credit Suisse Group AG, \emph{Report of the Special Committee of the Board of Directors on Archegos Capital Management}, Jul. 2021.
+
+\bibitem{nomura} Nomura Holdings, Inc., ``Potential for significant loss arising from transactions with a US client,'' press release, Mar. 29, 2021.
+
+\bibitem{svb} Board of Governors of the Federal Reserve System, \emph{Review of the Federal Reserve's Supervision and Regulation of Silicon Valley Bank}, Apr. 2023.
+
+\bibitem{lsta} A. Taylor and A. Sansone, Eds., \emph{The Handbook of Loan Syndications and Trading}. New York, NY, USA: McGraw-Hill, 2006.
+
+\bibitem{ltcm} R. Lowenstein, \emph{When Genius Failed: The Rise and Fall of Long-Term Capital Management}. New York, NY, USA: Random House, 2000.
+
+\bibitem{amaranth} H. Till, ``EDHEC comments on the Amaranth case: Early lessons from the debacle,'' EDHEC Risk and Asset Management Research Centre, 2006.
+
+\bibitem{mfglobal} J. W. Giddens, \emph{Report of the Trustee's Investigation and Recommendations}, SIPA Liquidation of MF Global Inc., Jun. 2012.
+
+\bibitem{metallgesellschaft} C. L. Culp and M. H. Miller, ``Metallgesellschaft and the economics of synthetic storage,'' \emph{Journal of Applied Corporate Finance}, vol. 7, no. 4, pp. 62--76, 1995.
+
+\bibitem{makerdao} Whiterabbit, ``Black Thursday for MakerDAO: \$8.32 million was liquidated for 0 DAI,'' Medium, 2020. [Online]. Available: \url{https://medium.com/@whiterabbit_hq/black-thursday-for-makerdao-8-32-million-was-liquidated-for-0-dai-36b83cac56b6}
+
+\bibitem{solend} Solend, ``SLND1: Mitigate risk from whale,'' governance proposal, Jun. 2022. [Online]. Available: \url{https://blog.save.finance/slnd1-mitigate-risk-from-whale-1504285ab4d2}
+
+\bibitem{aavecrv} L. Heimbach, E. Schertenleib, and R. Wattenhofer, ``Short squeeze in DeFi lending market: Decentralization in jeopardy?'' arXiv preprint arXiv:2302.04068, 2023. [Online]. Available: \url{https://arxiv.org/abs/2302.04068}
+
+\bibitem{united} Aave service providers, ``[ARFC] rsETH incident funding update,'' Aave Governance Forum, Apr. 2026. [Online]. Available: \url{https://governance.aave.com/t/arfc-rseth-incident-funding-update/24740} (accessed Aug. 2026).
+
+\bibitem{eulerexploit} M. Bentley, ``War \& peace: Behind the scenes of Euler's \$240M exploit recovery,'' Euler Labs, Jan. 2024. [Online]. Available: \url{https://www.euler.finance/blog/war-peace-behind-the-scenes-of-eulers-240m-exploit-recovery}
+
+\bibitem{eulerdocs} Euler Labs, \emph{Euler v2 documentation and Euler Vault Kit source code}, 2024. [Online]. Available: \url{https://docs.euler.finance} (accessed Aug. 2026).
+
+\bibitem{aavedocs} Aave, \emph{Aave protocol documentation}, 2026. [Online]. Available: \url{https://aave.com/docs} (accessed Aug. 2026).
+
+\bibitem{morpho} Morpho Labs, ``Morpho Blue whitepaper,'' Oct. 2023. [Online]. Available: \url{https://github.com/morpho-org/morpho-blue/blob/main/morpho-blue-whitepaper.pdf} (accessed Aug. 2026).
+
+\bibitem{nexus} Nexus Mutual, \emph{Nexus Mutual documentation}, 2026. [Online]. Available: \url{https://docs.nexusmutual.io} (accessed Aug. 2026).
+
+\bibitem{erc7540} J. Offerijns et al., ``EIP-7540: Asynchronous ERC-4626 tokenized vaults,'' Ethereum Improvement Proposals, 2023. [Online]. Available: \url{https://eips.ethereum.org/EIPS/eip-7540} (accessed Aug. 2026).
+
+\bibitem{llamalend} Curve Finance, \emph{LLAMALEND documentation}, 2026. [Online]. Available: \url{https://docs.curve.finance} (accessed Aug. 2026).
+
+\bibitem{kamino} Kamino Finance, \emph{Kamino Lend documentation}, 2026. [Online]. Available: \url{https://docs.kamino.finance} (accessed Aug. 2026).
+
+\bibitem{ipor} IPOR Labs, \emph{IPOR Fusion documentation}, 2026. [Online]. Available: \url{https://docs.ipor.io} (accessed Aug. 2026).
+
+\bibitem{midnight} Morpho Labs, \emph{Morpho Midnight source code and whitepaper}, 2026. [Online]. Available: \url{https://github.com/morpho-org/midnight} (accessed Aug. 2026).
+
+\end{thebibliography}
+
+\end{document}

@@ -1,0 +1,57 @@
+name: Build PDF
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-pdf-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Install TeX Live
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            texlive-latex-recommended \
+            texlive-latex-extra \
+            texlive-fonts-recommended \
+            texlive-pictures \
+            texlive-science \
+            latexmk
+
+      - name: Compile clearing-models.tex
+        run: |
+          latexmk -pdf -interaction=nonstopmode -halt-on-error clearing-models.tex
+
+      - name: Upload PDF artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: clearing-models
+          path: clearing-models.pdf
+          if-no-files-found: error
+
+      - name: Commit rebuilt PDF
+        if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -f clearing-models.pdf
+          if git diff --cached --quiet; then
+            echo "PDF unchanged; nothing to commit."
+            exit 0
+          fi
+          git commit -m "Rebuild clearing-models.pdf from ${GITHUB_SHA::7} [skip ci]"
+          git push origin HEAD:master
